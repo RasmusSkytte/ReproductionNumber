@@ -163,7 +163,7 @@ def prepare_activty_variables() :
     beta_basic  = np.loadtxt(open(os.path.join('data', 'betabasis.txt'),  'rb'), delimiter=' ', skiprows=0)
     population  = np.loadtxt(open(os.path.join('data', 'befolkning.txt'), 'rb'), delimiter=',', skiprows=0)
 
-    age_demograpic = np.sum(population, axis=0) / population.sum()
+    age_demograpic = np.sum(population, axis=0)
 
     n_age_groups = 9
 
@@ -193,9 +193,9 @@ def compute_activity(Nit) :
     d_init_grow  = 0.01
 
     G, B, Pi, beta_basic, age_demograpic, _ = prepare_activty_variables()
-    age_demograpic_diag = np.diag(age_demograpic)
+    age_demograpic_diag = np.diag(age_demograpic / age_demograpic.sum())
 
-    r0 = lambda act, growth : np.abs(np.exp(max(np.real(np.linalg.eigvals(G + B.dot(beta_basic*act).dot(age_demograpic_diag).dot(Pi))))) - growth)
+    r0 = lambda act, growth : np.abs(np.exp(max(np.real(np.linalg.eigvals(generator_matrix(G, B, Pi, beta_basic*act, age_demograpic_diag))))) - growth)
 
     activities = np.zeros(Nit)
 
@@ -203,19 +203,25 @@ def compute_activity(Nit) :
 
         growth_use = np.random.normal(loc=init_grow, scale=d_init_grow, size=None)
 
-        activities[i] = minimize_scalar(r0, bounds=(0, 1), args=growth_use, method='bounded' ).x # Find activity
+        activities[i] = minimize_scalar(r0, bounds=(0, 1), args=growth_use, method='bounded').x # Find activity
 
     return activities
 
 
-def eigenvector(S_vec, beta_multiplier):
+def generator_matrix(G, B, Pi, total_activity, S_matrix_age) :
+    return G + B.dot(total_activity).dot(S_matrix_age).dot(Pi)
+
+
+def eigenvector(S_vec, beta_multiplier, normalize=True):
 
     G, B, Pi, beta_basic, age_demograpic, n_age_groups = prepare_activty_variables()
 
-    EigSys = eig(G + B.dot(beta_basic*compute_activity(1_000).mean()*beta_multiplier)
-                 .dot(np.diag(age_demograpic*S_vec)).dot(Pi), left=True, right=False)
+    # Construct the generator matrix
+    g_M = generator_matrix(G, B, Pi, beta_basic * compute_activity(1_000).mean() * beta_multiplier, np.diag(age_demograpic * S_vec / age_demograpic.sum()))
 
-    eigvecState = np.real(EigSys[1][:,np.argmax(np.real(EigSys[0]))]) # Eigenvector for all states
+    EigSys = eig(g_M, left=True, right=False)
+
+    eigvecState = np.real(EigSys[1][:, np.argmax(np.real(EigSys[0]))]) # Eigenvector for all states
 
     # Sum up the 4 states into one measure of infection. (So sum of E1, E2, I1, and I2.)
     eigvec  =  eigvecState[0:n_age_groups]
@@ -223,7 +229,14 @@ def eigenvector(S_vec, beta_multiplier):
     eigvec  += eigvecState[2*n_age_groups:3*n_age_groups]
     eigvec  += eigvecState[3*n_age_groups:4*n_age_groups]
 
-    eigvec = eigvec / eigvec.sum()
+    if normalize :
+        eigvec = eigvec / eigvec.sum()
+    else :
+        v = np.dot(eigvecState, g_M)
+        eigvec  =  v[0:n_age_groups]
+        eigvec  += v[  n_age_groups:2*n_age_groups]
+        eigvec  += v[2*n_age_groups:3*n_age_groups]
+        eigvec  += v[3*n_age_groups:4*n_age_groups]
 
     return eigvec
 
@@ -238,7 +251,7 @@ def R_t_activity(S_vec, d_S_vec) :
 
     for it, activity in enumerate(compute_activity(Nit)):
 
-        tmp_S_vec = age_demograpic * np.clip(np.random.normal(loc=S_vec, scale=d_S_vec), 0, 1)
+        tmp_S_vec = age_demograpic / age_demograpic.sum() * np.clip(np.random.normal(loc=S_vec, scale=d_S_vec), 0, 1)
 
         # Next generation matrix A without the susceptible vector S (From matrix formalism of SEIR)
         AnoS = - Pi.dot( np.linalg.inv(G)).dot(B).dot(beta_basic) * activity
