@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+import scipy
 import datetime
 import os
 from scipy.interpolate import interp1d
@@ -93,11 +94,24 @@ def temperature_model(start_month, ref_month) :
     return beta_month_mean, beta_month_std
 
 @st.cache
-def vaccined_persons(p_mRNA, d_p_mRNA, p_az, d_p_az, p_jj, d_p_jj, d_vaccine_endorsement) :
+def load_N_max() :
+    return np.loadtxt(os.path.join('data', 'N_max.csv'))
+
+@st.cache
+def load_age_matrix() :
+    return np.loadtxt(os.path.join('data', 'age_matrix.csv'))
+
+@st.cache
+def load_risk() :
+    # Get the risk per target group
+    return np.loadtxt(os.path.join('data', 'risk.csv'))
+
+@st.cache
+def vaccined_persons(p_mRNA, d_p_mRNA, p_az, d_p_az, p_jj, d_p_jj, d_vaccine_endorsement, vaccine_endorsement_12_15, by_age_group=True) :
 
     # Load the age data
-    N_max = np.loadtxt(os.path.join('data', 'N_max.csv'))
-    age_matrix = np.loadtxt(os.path.join('data/', 'age_matrix.csv'))
+    N_max = load_N_max()
+    age_matrix = load_age_matrix()
 
     # Count total vaccinated (data)
     V_1_mRNA = np.loadtxt(os.path.join('data', 'V_1_mRNA_done.csv'))
@@ -108,6 +122,11 @@ def vaccined_persons(p_mRNA, d_p_mRNA, p_az, d_p_az, p_jj, d_p_jj, d_vaccine_end
     V_1_mRNA_p = np.loadtxt(os.path.join('data', 'V_1_mRNA_projected.csv'))
     V_1_az_p   = np.loadtxt(os.path.join('data', 'V_1_az_projected.csv'))
     V_1_jj_p   = np.loadtxt(os.path.join('data', 'V_1_jj_projected.csv'))
+
+    # Add the vaccine endorsement among 12-15 year olds
+    V_1_mRNA_p[-1] *= vaccine_endorsement_12_15
+    V_1_az_p[-1]   *= vaccine_endorsement_12_15
+    V_1_jj_p[-1]   *= vaccine_endorsement_12_15
 
     d_V_1_mRNA = V_1_mRNA_p * d_vaccine_endorsement
     d_V_1_az   = V_1_az_p   * d_vaccine_endorsement
@@ -122,37 +141,38 @@ def vaccined_persons(p_mRNA, d_p_mRNA, p_az, d_p_az, p_jj, d_p_jj, d_vaccine_end
     d_V_1_az   = np.append(d_V_1_az,   0)
     d_V_1_jj   = np.append(d_V_1_jj,   0)
 
+    if by_age_group :
     # Project målgrupper onto age groups
-    V_1_mRNA_alder = np.dot(V_1_mRNA, age_matrix)
-    V_1_az_alder   = np.dot(V_1_az,   age_matrix)
-    V_1_jj_alder   = np.dot(V_1_jj,   age_matrix)
+        V_1_mRNA = np.dot(V_1_mRNA, age_matrix)
+        V_1_az   = np.dot(V_1_az,   age_matrix)
+        V_1_jj   = np.dot(V_1_jj,   age_matrix)
 
-    d_V_1_mRNA_alder = np.dot(d_V_1_mRNA, age_matrix)
-    d_V_1_az_alder   = np.dot(d_V_1_az,   age_matrix)
-    d_V_1_jj_alder   = np.dot(d_V_1_jj,   age_matrix)
+        d_V_1_mRNA = np.dot(d_V_1_mRNA, age_matrix)
+        d_V_1_az   = np.dot(d_V_1_az,   age_matrix)
+        d_V_1_jj   = np.dot(d_V_1_jj,   age_matrix)
 
     # Project målgrupper counts to age
-    N_max_alder = np.dot(N_max, age_matrix)
+        N_max = np.dot(N_max, age_matrix)
 
 
     # Count the number of effective vaccinated
-    V_eff_alder, d_V_eff_alder = error_propergation_addition(
-                                        error_propergation_multiplication((V_1_mRNA_alder, d_V_1_mRNA_alder), (p_mRNA, d_p_mRNA)),
-                                        error_propergation_multiplication((V_1_az_alder,   d_V_1_az_alder),   (p_az,   d_p_az)),
-                                        error_propergation_multiplication((V_1_jj_alder,   d_V_1_jj_alder),   (p_jj,   d_p_jj)))
+    V_eff, d_V_eff = error_propergation_addition(
+                                        error_propergation_multiplication((V_1_mRNA, d_V_1_mRNA), (p_mRNA, d_p_mRNA)),
+                                        error_propergation_multiplication((V_1_az,   d_V_1_az),   (p_az,   d_p_az)),
+                                        error_propergation_multiplication((V_1_jj,   d_V_1_jj),   (p_jj,   d_p_jj)))
 
-    V_ineff_alder, d_V_ineff_alder = error_propergation_addition(
-                                        error_propergation_multiplication((V_1_mRNA_alder, d_V_1_mRNA_alder), (1-p_mRNA, d_p_mRNA)),
-                                        error_propergation_multiplication((V_1_az_alder,   d_V_1_az_alder),   (1-p_az,   d_p_az)),
-                                        error_propergation_multiplication((V_1_jj_alder,   d_V_1_jj_alder),   (1-p_jj,   d_p_jj)))
+    V_ineff, d_V_ineff = error_propergation_addition(
+                                        error_propergation_multiplication((V_1_mRNA, d_V_1_mRNA), (1-p_mRNA, d_p_mRNA)),
+                                        error_propergation_multiplication((V_1_az,   d_V_1_az),   (1-p_az,   d_p_az)),
+                                        error_propergation_multiplication((V_1_jj,   d_V_1_jj),   (1-p_jj,   d_p_jj)))
 
 
     # Compute the fraction of each age group that is in the vacicnated states
-    S_vacc_eff   = V_eff_alder   / N_max_alder
-    d_S_vacc_eff = d_V_eff_alder / N_max_alder
+    S_vacc_eff   = V_eff   / N_max
+    d_S_vacc_eff = d_V_eff / N_max
 
-    S_vacc_ineff   = V_ineff_alder   / N_max_alder
-    d_S_vacc_ineff = d_V_ineff_alder / N_max_alder
+    S_vacc_ineff   = V_ineff   / N_max
+    d_S_vacc_ineff = d_V_ineff / N_max
 
     return S_vacc_eff, d_S_vacc_eff, S_vacc_ineff, d_S_vacc_ineff
 
@@ -241,7 +261,7 @@ def eigenvector(S_vec, beta_multiplier, normalize=True):
     return eigvec
 
 
-def R_t_activity(S_vec, d_S_vec) :
+def R_t_activity(S_vec, d_S_vec, activity_modifier, d_activity_modifier) :
 
     Nit = 1_000 # How many samples do we make?
 
@@ -251,10 +271,14 @@ def R_t_activity(S_vec, d_S_vec) :
 
     for it, activity in enumerate(compute_activity(Nit)):
 
+        # Determine S_vec for interation
         tmp_S_vec = age_demograpic / age_demograpic.sum() * np.clip(np.random.normal(loc=S_vec, scale=d_S_vec), 0, 1)
 
+        # Determine activity modifier for interaction
+        tmp_activity_modifier = np.clip(np.random.normal(loc=activity_modifier, scale=d_activity_modifier), 0, 1)
+
         # Next generation matrix A without the susceptible vector S (From matrix formalism of SEIR)
-        AnoS = - Pi.dot( np.linalg.inv(G)).dot(B).dot(beta_basic) * activity
+        AnoS = - Pi.dot( np.linalg.inv(G)).dot(B).dot(beta_basic * tmp_activity_modifier) * activity
 
         contact_vector[it] = max(np.real(np.linalg.eigvals(AnoS.dot(np.diag(tmp_S_vec)))))
 
@@ -262,6 +286,24 @@ def R_t_activity(S_vec, d_S_vec) :
     return np.mean(contact_vector), np.std(contact_vector) / np.sqrt(Nit)
 
 
+def minimize_sero(n_age_groups, level) :
+
+    # Data from latest analysis
+    x = [(29-17)/2+17, (49-30)/2+30, (69-50)/2+50]
+    y = [0.096, 0.063, 0.050]
+
+    # interpolate onto age groups
+    f = interp1d(x, y, kind='nearest', fill_value='extrapolate')
+    xx = np.arange(5, n_age_groups*10, 10)
+    sero_0 = f(xx)
+    return sero_0 * scipy.optimize.root_scalar(lambda k : pop_avg(sero_0 * k) - level, bracket=(0, 10)).root
+
+
+
+def pop_avg(x) :
+    _, _, _, _, age_demograpic, _ = prepare_activty_variables()
+
+    return np.sum(x * age_demograpic) / age_demograpic.sum()
 
 
 

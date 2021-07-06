@@ -1,0 +1,7 @@
+numpy
+pandas
+streamlit
+os
+scipy
+datetime
+matplotlib
